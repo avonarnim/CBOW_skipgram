@@ -1,5 +1,6 @@
 import argparse
 import os
+import random
 import tqdm
 import torch
 from sklearn.metrics import accuracy_score
@@ -53,21 +54,23 @@ def setup_dataloader(args):
     input_output_pairs = []
     for sentence in encoded_sentences:
         for central_i in range(len(sentence)):
-            # should not create input-output pairs for sentence ends (i.e. seqs of 0 0 0 0 0 0... 0)
-            # this condition will scalp a few potential pairs but save lots of computational time in processing sentences
-            if sentence[central_i] == 0:
+            # if there will not be any input-outputs from here on out (no matter what context window), then break
+            if central_i > 5 and sentence[central_i-5] == 0:
                 break
 
+            # context half-size k (pi-k, pi-(k-1), ... pi, ... pi+(k-1), pi+k) is sampled between 2-6
+            # this gives minimum 2 context words & up to 10 context words
+            context_size = random.randint(2, 6)
+
+            # should not create input-output pairs for sentence ends (i.e. seqs of 0 0 0 0 0 0... 0)
             for offset in range(1, context_size):
                 pos_offset_i = central_i + offset
 
-
-                if pos_offset_i < len(sentence):
-                    one_hot_output = np.zeros(args.vocab_size)
+                if pos_offset_i < len(sentence) and sentence[pos_offset_i] != 0:
                     input_output_pairs.append([sentence[central_i], sentence[pos_offset_i]])
 
                 neg_offset_i = central_i - offset
-                if neg_offset_i > 0:
+                if neg_offset_i > 0  and sentence[neg_offset_i] != 0:
                     input_output_pairs.append([sentence[central_i], sentence[neg_offset_i]])
 
     # splitting training and validation sets
@@ -136,9 +139,9 @@ def train_epoch(
         pred_logits = model(inputs, labels)
 
         # calculate prediction loss
-        # TODO: right now, we look at a batch of 32 input words & 32 input labels
-        # my model spits out 32 guesses, each an embedding of 300 dimensions
-        # the output is in the form of 32
+        # print(len(pred_logits))
+        # print(len(pred_logits[0]))
+        # print(max(pred_logits[0]), max(pred_logits[1]), max(pred_logits[2]), max(pred_logits[3]))
         loss = criterion(pred_logits.squeeze(1), labels)
 
         # step optimizer and compute gradients during training
@@ -284,7 +287,7 @@ if __name__ == "__main__":
         default='learned_word_vectors.txt'
     )
     parser.add_argument(
-        "--num_epochs", default=10, type=int, help="number of training epochs"
+        "--num_epochs", default=2, type=int, help="number of training epochs"
     )
     parser.add_argument(
         "--val_every",
