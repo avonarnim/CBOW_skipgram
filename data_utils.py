@@ -8,9 +8,9 @@ from collections import Counter
 from spacy.lang.en import English
 
 
-def split_into_train_val(input_output_list, train_prop=0.95):
-    split_idx = int(len(input_output_list)*train_prop)
-    return input_output_list[:split_idx], input_output_list[split_idx:]
+def split_into_train_val(ioList, train_prop=0.95):
+    split_idx = int(len(ioList)*train_prop)
+    return ioList[:split_idx], ioList[split_idx:]
 
 def process_book_dir(d, max_per_book=None):
     nlp = English()

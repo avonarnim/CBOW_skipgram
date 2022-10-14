@@ -1,6 +1,9 @@
 import argparse
+from asyncio import MultiLoopChildWatcher
+from operator import index
 import os
 import random
+from xml.sax.xmlreader import InputSource
 import tqdm
 import torch
 from sklearn.metrics import accuracy_score
@@ -12,6 +15,17 @@ import data_utils
 from data_utils import split_into_train_val
 from model import Skipgram
 
+
+class Custom_Dataset(torch.utils.data.dataset.Dataset):
+    def __init__(self, _dataset):
+        self.dataset = _dataset
+
+    def __getitem__(self, index):
+        input, target = self.dataset[index]
+        return input, target
+
+    def __len__(self):
+        return len(self.dataset)
 
 def setup_dataloader(args):
     """
@@ -50,8 +64,7 @@ def setup_dataloader(args):
     # ===================================================== #
 
     # skipgram --> one word predicts multiple surrounding words
-    context_size = 2
-    input_output_pairs = []
+    input_outputs = []
     for sentence in encoded_sentences:
         for central_i in range(len(sentence)):
             # if there will not be any input-outputs from here on out (no matter what context window), then break
@@ -61,21 +74,30 @@ def setup_dataloader(args):
             # context half-size k (pi-k, pi-(k-1), ... pi, ... pi+(k-1), pi+k) is sampled between 2-6
             # this gives minimum 2 context words & up to 10 context words
             context_size = random.randint(2, 6)
+            input = [sentence[central_i]]
+            output = [-1]*10
+            pointer = 0
 
             # should not create input-output pairs for sentence ends (i.e. seqs of 0 0 0 0 0 0... 0)
+            # should create input-output pairs for context words that are within bounds
             for offset in range(1, context_size):
-                pos_offset_i = central_i + offset
+                position = central_i + offset
+                if position < len(sentence) and sentence[position] != 0:
+                    output[pointer] = sentence[position]
+                    pointer += 1
 
-                if pos_offset_i < len(sentence) and sentence[pos_offset_i] != 0:
-                    input_output_pairs.append([sentence[central_i], sentence[pos_offset_i]])
+                position = central_i - offset
+                if position > 0  and sentence[position] != 0:
+                    output[pointer] = sentence[position]
+                    pointer += 1
 
-                neg_offset_i = central_i - offset
-                if neg_offset_i > 0  and sentence[neg_offset_i] != 0:
-                    input_output_pairs.append([sentence[central_i], sentence[neg_offset_i]])
+            input_outputs.append((input, output))
 
     # splitting training and validation sets
-    train_dataset, val_dataset = split_into_train_val(input_output_pairs)
-
+    train, val = split_into_train_val(input_outputs)
+    train_dataset = Custom_Dataset(train)
+    val_dataset = Custom_Dataset(val)
+    
     # creating data loaders
     train_loader = torch.utils.data.DataLoader(train_dataset, shuffle=True, batch_size=args.batch_size)
     val_loader = torch.utils.data.DataLoader(val_dataset, shuffle=True, batch_size=args.batch_size)
@@ -104,13 +126,48 @@ def setup_optimizer(args, model):
     # Task: Initialize the loss function for predictions. 
     # Also initialize your optimizer.
     # ===================================================== #
-    learning_rate = 0.001
+    learning_rate = 0.01
 
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
     return criterion, optimizer
 
+def calculate_accuracy(predictions, labels):
+    # record all intersection/union values
+    ious = []
+    skips = 0
+    for i in range(len(predictions)):
+
+        # find k labels that exist for word
+        labelsThatExistForCentralWord = []
+        for j in range(len(labels)):
+            if labels[j][i] != -1:
+                labelsThatExistForCentralWord.append(labels[j][i])
+
+        labelsCount = len(labelsThatExistForCentralWord)
+        if labelsCount == 0:
+            skips += 1
+            continue
+
+        # for each output, find top k predicted words
+        top_k = set()
+        for j in range(labelsCount):
+            index_of_max = torch.argmax(predictions[i])
+            top_k.add(predictions[i][index_of_max])
+            predictions[i][index_of_max] = 0
+
+        # compare targets to predictions
+        intersected = top_k.intersection(labelsThatExistForCentralWord)
+        unioned = top_k.union(labelsThatExistForCentralWord)
+
+        single_iou = len(intersected) / len(unioned)
+        ious.append(single_iou)
+
+    divisor = (len(predictions)-skips)
+    if divisor != 0:
+        return sum(ious)/divisor
+    return 0
 
 def train_epoch(
     args,
@@ -125,24 +182,31 @@ def train_epoch(
     epoch_loss = 0.0
 
     # keep track of the model predictions for computing accuracy
-    pred_labels = []
-    target_labels = []
+    batch_accuracy = []
+    batch_sizes = []
 
     # iterate over each batch in the dataloader
     # NOTE: you may have additional outputs from the loader __getitem__, you can modify this
     for (inputs, labels) in tqdm.tqdm(loader):
-        # put model inputs to device
-        inputs, labels = inputs.to(device).long(), labels.to(device).long()
-
-        # calculate the loss and train accuracy and perform backprop
-        # NOTE: feel free to change the parameters to the model forward pass here + outputs
-        pred_logits = model(inputs, labels)
+        # # calculate the loss and train accuracy and perform backprop
+        # # NOTE: feel free to change the parameters to the model forward pass here + outputs
+        pred_logits = model(inputs[0])
 
         # calculate prediction loss
-        # print(len(pred_logits))
-        # print(len(pred_logits[0]))
-        # print(max(pred_logits[0]), max(pred_logits[1]), max(pred_logits[2]), max(pred_logits[3]))
-        loss = criterion(pred_logits.squeeze(1), labels)
+        # pred_logits is 32x3000, multiHotLabels is 32x3000
+        multiHotLabels = np.zeros((len(inputs[0]), args.vocab_size), dtype=np.int32)
+        for oneLabelFromEachInput in range(len(labels)):
+            for inputIdx in range(len(labels[oneLabelFromEachInput])):
+                # only iterate through labels tensor while there are valid labels
+                # note: label of -1 is included initially so that dynamic # of labels can be placed on tensor of uniform length
+                label = labels[oneLabelFromEachInput][inputIdx]
+                if label != -1:
+                    multiHotLabels[inputIdx][label] = 1
+
+        # creating tensor to be fed into loss function
+        multiHotTensor = torch.from_numpy(multiHotLabels)
+
+        loss = criterion(pred_logits, multiHotTensor.float())
 
         # step optimizer and compute gradients during training
         if training:
@@ -154,11 +218,17 @@ def train_epoch(
         epoch_loss += loss.item()
 
         # compute metrics
-        preds = pred_logits.argmax(-1)
-        pred_labels.extend(preds.cpu().numpy())
-        target_labels.extend(labels.cpu().numpy())
+        # calculate accuracy per-batch, store batch-wise accuracy, compute average accuracy where current accuracy is
+        batch_accuracy.append(calculate_accuracy(pred_logits, labels))
+        batch_sizes.append(len(inputs[0]))
 
-    acc = accuracy_score(pred_labels, target_labels)
+    # compute total accuracy based on weighted average of batch-wise accuracies
+    achieved = 0
+    possible = 0
+    for i in range(len(batch_accuracy)):
+        achieved += batch_accuracy[i]*batch_sizes[i]
+        possible += batch_sizes[i]
+    acc = achieved/possible
     epoch_loss /= len(loader)
 
     return epoch_loss, acc
@@ -287,17 +357,17 @@ if __name__ == "__main__":
         default='learned_word_vectors.txt'
     )
     parser.add_argument(
-        "--num_epochs", default=2, type=int, help="number of training epochs"
+        "--num_epochs", default=5, type=int, help="number of training epochs"
     )
     parser.add_argument(
         "--val_every",
-        default=5,
+        default=1,
         type=int,
         help="number of epochs between every eval loop",
     )
     parser.add_argument(
         "--save_every",
-        default=5,
+        default=1,
         type=int,
         help="number of epochs between saving model checkpoint",
     )
@@ -307,7 +377,7 @@ if __name__ == "__main__":
     # ===================================================== #
     parser.add_argument(
         "--embedding_dim",
-        default=300,
+        default=128,
         type=int,
         help="size of embedding vector",
     )

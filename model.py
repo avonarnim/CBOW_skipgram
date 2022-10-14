@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 
 class Skipgram(torch.nn.Module):
     def __init__(
@@ -19,11 +19,17 @@ class Skipgram(torch.nn.Module):
 
         self.fc = torch.nn.Linear(embedding_dim, vocab_size)
 
-    def forward(self, input, context):
-        embedded_basis = self.embed(input)
-        # embedded_context = self.context_embedding(context)
-        # embedded_product = torch.mul(embedded_basis, embedded_context)
+        self.softmax = torch.nn.Softmax(dim=1)
 
-        out = self.fc(embedded_basis)
+    def forward(self, input):
+
+        # create embeddings for each word
+        embedded_basis = self.embed(input)
+
+        # create fully connected layer on top of embeddings
+        scores = self.fc(embedded_basis)
+
+        # run softmax on fully-connected output to get outputs in range [0.0, 1.0]
+        out = self.softmax(scores)
 
         return out
