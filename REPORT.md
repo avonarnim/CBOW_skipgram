@@ -41,7 +41,7 @@ This calculation is done for every batch and then the average over the epoch is 
 
 ## Analysis of Released Code
 
-The in vitro task involved in this code is predicting context words for each word in a corpus derived from classic books such as Walden, The Picture of Dorian Gray, and The Iliad. The in vivo task being evaluated is accuracy at predicting word-pair relations. For example, the model is tested whether given words such as `fat`, `thin`, and `back` in the pretext of guessing antonyms, it can predict `front`. The metrics being used for the analogies dataset are Mean Reciprocal Rank (MRR) and Mean Rank. MRR indicates what ranking a guess is placed at. For example, if for the previous example, the model predicted `front` as the
+The in vitro task involved in this code is predicting context words for each word in a corpus derived from classic books such as Walden, The Picture of Dorian Gray, and The Iliad. The in vivo task being evaluated is accuracy at predicting word-pair relations (analogies). For example, the model is tested whether given words such as `fat`, `thin`, and `back` in the pretext of guessing antonyms, it can predict `front`. The metrics being used for the analogies dataset are Mean Reciprocal Rank (MRR) and Mean Rank. MRR indicates what ranking a guess is placed at. For example, if for the previous example, the model predicted `front` as the
 
 - 1st most-likely word --> MRR = 1
 - 2nd most-likely word --> MRR = 1/2
@@ -54,4 +54,19 @@ The in vitro task involved in this code is predicting context words for each wor
 - 3rd most-likely word --> MR = 3
 - 500th most-likely word --> MR = 500
 - 3000th most-likely word --> MR = 3000.
-  One aspect of these metrics that can underevaluate model performance is the fact that certain semantic categories like "capitals" will undoubtely have very low model performance because the texts we assess are generally non-information based and therefore will not have geographic information presented very often. This - when factored into the overall semantic accuracy - lowers the score beyond what is (arguably) fair.
+  One aspect of these metrics that can underevaluate model performance is the fact that certain semantic categories like
+  "capitals" will undoubtely have very low model performance because the texts we assess are generally non-information
+  based and therefore will not have geographic information presented very often. This - when factored into the overall
+  semantic accuracy - lowers the score beyond what is (arguably) fair.
+
+## Fixes
+
+Note: after reviewing the completed homework, I realized that I was inappropriately applying a softmax on the outputs of the
+model's FC layer, which in turn causes the loss function (which expects logits and performs its own sigmoid operation) to
+be operating on top of probability distributions. This (at the minimum) causes learning to be extremely slow.
+
+After getting rid of the softmax, the model began learning better. After 5 epochs, the MRR for semantic relations increased
+from 0.0022 to 0.0028 and the MR shrunk from 457 to 356. The MRR for syntactic relations increased from 0.0010 to 0.0024 and
+the MR shrunk from 1048 to 425.
+
+Further, the training loss shrunk to 0.2537, and the validation loss shrunk to 0.0514.

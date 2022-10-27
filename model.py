@@ -19,8 +19,6 @@ class Skipgram(torch.nn.Module):
 
         self.fc = torch.nn.Linear(embedding_dim, vocab_size)
 
-        self.softmax = torch.nn.Softmax(dim=1)
-
     def forward(self, input):
 
         # create embeddings for each word
@@ -29,7 +27,4 @@ class Skipgram(torch.nn.Module):
         # create fully connected layer on top of embeddings
         scores = self.fc(embedded_basis)
 
-        # run softmax on fully-connected output to get outputs in range [0.0, 1.0]
-        out = self.softmax(scores)
-
-        return out
+        return scores

@@ -99,6 +99,7 @@ def setup_dataloader(args):
     val_dataset = Custom_Dataset(val)
     
     # creating data loaders
+    # inputs/outputs are lists of indies: context [cidx, cjdx, ...] and word [widx]
     train_loader = torch.utils.data.DataLoader(train_dataset, shuffle=True, batch_size=args.batch_size)
     val_loader = torch.utils.data.DataLoader(val_dataset, shuffle=True, batch_size=args.batch_size)
     return train_loader, val_loader, index_to_vocab
@@ -128,6 +129,7 @@ def setup_optimizer(args, model):
     # ===================================================== #
     learning_rate = 0.01
 
+    # inputs: multi-hot vector w/ 1 at each context word
     criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
@@ -327,7 +329,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, help="where to save training outputs")
+    parser.add_argument("--output_dir", type=str, default="output/", help="where to save training outputs")
     parser.add_argument("--data_dir", type=str, help="where the book dataset is stored")
     parser.add_argument(
         "--downstream_eval",
@@ -361,7 +363,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--val_every",
-        default=1,
+        default=2,
         type=int,
         help="number of epochs between every eval loop",
     )
